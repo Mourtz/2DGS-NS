@@ -68,13 +68,13 @@ class EnvironmentProbe:
     def _make_face_cam(self, face_idx: int) -> MiniCam:
         """Build a MiniCam looking in face direction `face_idx`."""
         fwd, up, _ = _FACE_CONFIGS[face_idx]
-        R = _face_R(fwd, up)             # c2w rotation [3, 3]
+        R = _face_R(fwd, up)
         T = np.zeros(3, dtype=np.float32)  # camera at world origin
 
         W2C = getWorld2View2(R, T)
         W2C_t = torch.tensor(W2C, dtype=torch.float32).T.cuda()  # transposed as expected
 
-        fov = math.pi / 2.0              # 90°
+        fov = math.pi / 2.0
         proj = getProjectionMatrix(
             znear=0.01, zfar=100.0, fovX=fov, fovY=fov
         ).transpose(0, 1).cuda()

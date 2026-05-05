@@ -20,6 +20,31 @@ This repository includes extensions from an MSc AI thesis that replaces spherica
 For the exact commandline arguments and training details, please refer to
 [REPRODUCE.md](REPRODUCE.md).
 
+## Installation
+
+```bash
+# download
+git clone https://github.com/Mourtz/2DGS-NS.git --recursive
+
+# if you have an environment used for 3dgs, use it
+# if not, create a new environment
+conda env create --file environment.yml
+conda activate surfel_splatting
+```
+## Training
+To train a scene, simply use
+```bash
+python train.py -s <path to COLMAP or NeRF Synthetic dataset>
+```
+Commandline arguments for regularizations
+```bash
+--lambda_normal  # hyperparameter for normal consistency
+--lambda_distortion # hyperparameter for depth distortion
+--depth_ratio # 0 for mean depth and 1 for median depth, 0 works for most cases
+```
+**Tips for adjusting the parameters on your own dataset:**
+- For unbounded/large scenes, we suggest using mean depth, i.e., ``depth_ratio=0``,  for less "disk-aliasing" artifacts.
+
 ## Acknowledgements
 This project is built upon [2DGS](https://github.com/hbb1/2d-gaussian-splatting). The TSDF fusion for extracting mesh is based on [Open3D](https://github.com/isl-org/Open3D). The rendering script for MipNeRF360 is adopted from [Multinerf](https://github.com/google-research/multinerf/), while the evaluation scripts for DTU and Tanks and Temples dataset are taken from [DTUeval-python](https://github.com/jzhangbs/DTUeval-python) and [TanksAndTemples](https://github.com/isl-org/TanksAndTemples/tree/master/python_toolbox/evaluation), respectively. The fusing operation for accelerating the renderer is inspired by [Han's repodcue](https://github.com/Han230104/2D-Gaussian-Splatting-Reproduce). We thank all the authors for their great repos. 
 

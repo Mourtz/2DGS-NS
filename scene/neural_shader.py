@@ -85,14 +85,14 @@ class PositionalNeuralShader(nn.Module):
         self.use_reflection = use_reflection
         self.specular_scale = specular_scale
         self.dir_noise_std = dir_noise_std  # noise on view/refl direction (training only)
-        self.use_ide = use_ide  # Exp 39: replace sinusoidal refl enc with IDE (roughness-attenuated)
+        self.use_ide = use_ide
         self.norm_xyz = norm_xyz
         # Registered as buffers so they're included in state_dict and restored on load.
         self.register_buffer('scene_center', torch.zeros(3))
         self.register_buffer('scene_scale', torch.ones(1))
 
-        pos_enc_dim = 3 * (1 + 2 * n_pos_freqs)   # 39 with n=6
-        dir_enc_dim = 3 * (1 + 2 * n_dir_freqs)   # 27 with n=4
+        pos_enc_dim = 3 * (1 + 2 * n_pos_freqs)
+        dir_enc_dim = 3 * (1 + 2 * n_dir_freqs)
         n_dir = 2 if use_reflection else 1
         in_dim = pos_enc_dim + dir_enc_dim * n_dir
 
