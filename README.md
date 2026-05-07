@@ -32,7 +32,6 @@ conda env create --file environment.yml
 conda activate surfel_splatting
 ```
 ## Training
-To train a scene, simply use
 ```bash
 python train.py -s <path to COLMAP or NeRF Synthetic dataset>
 ```
@@ -41,6 +40,14 @@ Commandline arguments for regularizations
 --lambda_normal  # hyperparameter for normal consistency
 --lambda_distortion # hyperparameter for depth distortion
 --depth_ratio # 0 for mean depth and 1 for median depth, 0 works for most cases
+```
+
+# Testing
+```bash
+python render.py -s <path to COLMAP or NeRF Synthetic dataset> -m <path to trained model> --eval
+```
+```bash
+python metrics.py -m <path to trained model>
 ```
 **Tips for adjusting the parameters on your own dataset:**
 - For unbounded/large scenes, we suggest using mean depth, i.e., ``depth_ratio=0``,  for less "disk-aliasing" artifacts.
