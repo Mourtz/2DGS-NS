@@ -322,3 +322,12 @@ python train.py -s data/nerf_synthetic/materials -m output/ct_clustered_frozen_s
   --iterations 60000 --position_lr_max_steps 60000 \
   --test_iterations 30000 60000 --save_iterations 30000 60000
 ```
+
+
+To evaluate:
+```bash
+python render.py -s <dataset path> -m <model path> --eval
+```
+```bash
+python metrics.py -m <model path>
+```
