@@ -14,9 +14,7 @@
 
 import numpy as np
 import os
-import enum
-import types
-from typing import List, Mapping, Optional, Text, Tuple, Union
+from typing import Optional, Tuple
 import copy
 from PIL import Image
 import mediapy as media
@@ -34,11 +32,9 @@ def pad_poses(p: np.ndarray) -> np.ndarray:
   bottom = np.broadcast_to([0, 0, 0, 1.], p[..., :1, :4].shape)
   return np.concatenate([p[..., :3, :4], bottom], axis=-2)
 
-
 def unpad_poses(p: np.ndarray) -> np.ndarray:
   """Remove the homogeneous bottom row from [..., 4, 4] pose matrices."""
   return p[..., :3, :4]
-
 
 def recenter_poses(poses: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
   """Recenter poses around the origin."""
@@ -46,7 +42,6 @@ def recenter_poses(poses: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
   transform = np.linalg.inv(pad_poses(cam2world))
   poses = transform @ pad_poses(poses)
   return unpad_poses(poses), transform
-
 
 def average_pose(poses: np.ndarray) -> np.ndarray:
   """New pose using average position, z-axis, and up vector of input poses."""
@@ -169,7 +164,6 @@ def generate_ellipse_path(poses: np.ndarray,
 
   return np.stack([viewmatrix(p - center, up, p) for p in positions])
 
-
 def generate_path(viewpoint_cameras, n_frames=480):
   c2ws = np.array([np.linalg.inv(np.asarray((cam.world_view_transform.T).cpu().numpy())) for cam in viewpoint_cameras])
   pose = c2ws[:,:3,:] @ np.diag([1, -1, -1, 1])
@@ -199,7 +193,6 @@ def load_img(pth: str) -> np.ndarray:
     image = np.array(Image.open(f), dtype=np.float32)
   return image
 
-
 def create_videos(base_dir, input_dir, out_name, num_frames=480):
   """Creates videos out of the images saved to disk."""
   # Last two parts of checkpoint path are experiment name and scene name.
@@ -211,7 +204,6 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
   os.makedirs(base_dir, exist_ok=True)
   render_dist_curve_fn = np.log
   
-  # Load one example frame to get image shape and depth range.
   depth_file = os.path.join(input_dir, 'vis', f'depth_{idx_to_str(0)}.tiff')
   depth_frame = load_img(depth_file)
   shape = depth_frame.shape
@@ -231,7 +223,6 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
     video_file = os.path.join(base_dir, f'{video_prefix}_{k}.mp4')
     input_format = 'gray' if k == 'alpha' else 'rgb'
     
-
     file_ext = 'png' if k in ['color', 'normal'] else 'tiff'
     idx = 0
 
@@ -273,7 +264,6 @@ def save_img_u8(img, pth):
     Image.fromarray(
         (np.clip(np.nan_to_num(img), 0., 1.) * 255.).astype(np.uint8)).save(
             f, 'PNG')
-
 
 def save_img_f32(depthmap, pth):
   """Save an image (probably a depthmap) to disk as a float32 TIFF."""

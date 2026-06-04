@@ -12,12 +12,11 @@
 import torch
 import numpy as np
 import os
-import math
 from tqdm import tqdm
 from utils.render_utils import save_img_f32, save_img_u8
 from functools import partial
 import open3d as o3d
-import trimesh
+from utils.general_utils import get_device
 
 def post_process_mesh(mesh, cluster_to_keep=1000):
     """
@@ -47,10 +46,11 @@ def to_cam_open3d(viewpoint_stack):
     for i, viewpoint_cam in enumerate(viewpoint_stack):
         W = viewpoint_cam.image_width
         H = viewpoint_cam.image_height
+        device = viewpoint_cam.world_view_transform.device
         ndc2pix = torch.tensor([
             [W / 2, 0, 0, (W-1) / 2],
             [0, H / 2, 0, (H-1) / 2],
-            [0, 0, 0, 1]]).float().cuda().T
+            [0, 0, 0, 1]]).float().to(device).T
         intrins =  (viewpoint_cam.projection_matrix @ ndc2pix)[:3,:3].T
         intrinsic=o3d.camera.PinholeCameraIntrinsic(
             width=viewpoint_cam.image_width,
@@ -69,7 +69,6 @@ def to_cam_open3d(viewpoint_stack):
 
     return camera_traj
 
-
 class GaussianExtractor(object):
     def __init__(self, gaussians, render, pipe, bg_color=None):
         """
@@ -80,9 +79,8 @@ class GaussianExtractor(object):
         >>> gaussExtrator.reconstruction(view_points)
         >>> mesh = gaussExtractor.export_mesh_bounded(...)
         """
-        if bg_color is None:
-            bg_color = [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        device = get_device()
+        background = torch.tensor(bg_color, dtype=torch.float32, device=device)
         self.gaussians = gaussians
         self.render = partial(render, pipe=pipe, bg_color=background)
         self.clean()
@@ -110,23 +108,20 @@ class GaussianExtractor(object):
             self.depthmaps.append(depth.cpu())
             self.depth_normals.append(depth_normal.cpu())
         
-        # self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
-        # self.depthmaps = torch.stack(self.depthmaps, dim=0)
-        # self.alphamaps = torch.stack(self.alphamaps, dim=0)
-        # self.depth_normals = torch.stack(self.depth_normals, dim=0)
         self.estimate_bounding_sphere()
 
     def estimate_bounding_sphere(self):
         """
         Estimate the bounding sphere given camera pose
         """
-        from utils.render_utils import transform_poses_pca, focus_point_fn
-        torch.cuda.empty_cache()
+        from utils.render_utils import focus_point_fn
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         c2ws = np.array([np.linalg.inv(np.asarray((cam.world_view_transform.T).cpu().numpy())) for cam in self.viewpoint_stack])
         poses = c2ws[:,:3,:] @ np.diag([1, -1, -1, 1])
         center = (focus_point_fn(poses))
         self.radius = np.linalg.norm(c2ws[:,:3,3] - center, axis=-1).min()
-        self.center = torch.from_numpy(center).float().cuda()
+        self.center = torch.from_numpy(center).float().to(self.gaussians.device)
         print(f"The estimated bounding radius is {self.radius:.2f}")
         print(f"Use at least {2.0 * self.radius:.2f} for depth_trunc")
 
@@ -148,15 +143,21 @@ class GaussianExtractor(object):
         print(f'depth_truc: {depth_trunc}')
 
         # Use tensor-based VoxelBlockGrid — ScalableTSDFVolume segfaults on open3d 0.18 + CachyOS.
-        o3d_device = o3d.core.Device('CUDA:0')
+        if torch.cuda.is_available():
+            o3d_device = o3d.core.Device('CUDA:0')
+        else:
+            o3d_device = o3d.core.Device('CPU:0')
         trunc_multiplier = sdf_trunc / voxel_size
 
-        # Size block_count to consume ~70 % of currently free VRAM, minus a 2 GB safety margin.
-        # Empirical cost at block_resolution=16: ~65 KB/block.
-        _free_bytes = torch.cuda.mem_get_info()[0]
-        _bytes_per_block = 65 * 1024
+        if torch.cuda.is_available():
+            _free_bytes = torch.cuda.mem_get_info()[0]
+        else:
+            _free_bytes = 16 * 1024 ** 3  # assume 16 GB free on CPU
+        _bytes_per_block = 65 * 1024 # empirical bytes per block for 16^3 voxels
+        
+        # block_count consumes ~70 % of currently free VRAM, minus a 2 GB safety margin.
         block_count = max(10_000, int((_free_bytes - 2 * 1024 ** 3) * 0.70 / _bytes_per_block))
-        print(f'block_count: {block_count}  ({block_count * _bytes_per_block / 1024**3:.1f} GB reserved on GPU)')
+        print(f'block_count: {block_count}  ({block_count * _bytes_per_block / 1024**3:.1f} GB reserved on {o3d_device})')
         print(f'tip: pass --mesh_res 4096 (or higher) for finer voxels; current voxel_size={voxel_size:.5f} m')
 
         vbg = o3d.t.geometry.VoxelBlockGrid(
@@ -178,13 +179,13 @@ class GaussianExtractor(object):
             if mask_backgrond and (viewpoint_cam.gt_alpha_mask is not None):
                 depth[(viewpoint_cam.gt_alpha_mask < 0.5)] = 0
 
-            # Build camera intrinsic 3×3 matrix
             W = viewpoint_cam.image_width
             H = viewpoint_cam.image_height
+            device = viewpoint_cam.world_view_transform.device
             ndc2pix = torch.tensor([
                 [W / 2, 0, 0, (W-1) / 2],
                 [0, H / 2, 0, (H-1) / 2],
-                [0, 0, 0, 1]]).float().cuda().T
+                [0, 0, 0, 1]]).float().to(device).T
             intrins = (viewpoint_cam.projection_matrix @ ndc2pix)[:3,:3].T
             intrinsic = o3d.core.Tensor(np.array([
                 [intrins[0,0].item(), 0,                   intrins[0,2].item()],
@@ -245,10 +246,11 @@ class GaussianExtractor(object):
             depth[depth > depth_trunc] = 0
 
             H, W = viewpoint_cam.image_height, viewpoint_cam.image_width
+            device = viewpoint_cam.world_view_transform.device
             ndc2pix = torch.tensor([
                 [W / 2, 0, 0, (W-1) / 2],
                 [0, H / 2, 0, (H-1) / 2],
-                [0, 0, 0, 1]]).float().cuda().T
+                [0, 0, 0, 1]]).float().to(device).T
             intrins = (viewpoint_cam.projection_matrix @ ndc2pix)[:3, :3].T
             fx, fy = intrins[0, 0].item(), intrins[1, 1].item()
             cx, cy = intrins[0, 2].item(), intrins[1, 2].item()
@@ -289,10 +291,10 @@ class GaussianExtractor(object):
         normals = np.concatenate(all_normals, axis=0)
         colors  = np.concatenate(all_colors,  axis=0)
 
-        # Use CUDA tensor PointCloud — legacy Vector3dVector segfaults on CachyOS
-        # with large (~GB) allocations (same root cause as ScalableTSDFVolume).
-        # Only convert to legacy after downsampling, when the data is small.
-        gpu = o3d.core.Device('CUDA:0')
+        if torch.cuda.is_available():
+            gpu = o3d.core.Device('CUDA:0')
+        else:
+            gpu = o3d.core.Device('CPU:0')
         pcd_t = o3d.t.geometry.PointCloud(gpu)
         pcd_t.point['positions'] = o3d.core.Tensor(points,  dtype=o3d.core.float32, device=gpu)
         pcd_t.point['normals']   = o3d.core.Tensor(normals, dtype=o3d.core.float32, device=gpu)
@@ -343,8 +345,8 @@ class GaussianExtractor(object):
             z = new_points[..., -1:]
             pix_coords = (new_points[..., :2] / new_points[..., -1:])
             mask_proj = ((pix_coords > -1. ) & (pix_coords < 1.) & (z > 0)).all(dim=-1)
-            sampled_depth = torch.nn.functional.grid_sample(depthmap.cuda()[None], pix_coords[None, None], mode='bilinear', padding_mode='border', align_corners=True).reshape(-1, 1)
-            sampled_rgb = torch.nn.functional.grid_sample(rgbmap.cuda()[None], pix_coords[None, None], mode='bilinear', padding_mode='border', align_corners=True).reshape(3,-1).T
+            sampled_depth = torch.nn.functional.grid_sample(depthmap[None], pix_coords[None, None], mode='bilinear', padding_mode='border', align_corners=True).reshape(-1, 1)
+            sampled_rgb = torch.nn.functional.grid_sample(rgbmap[None], pix_coords[None, None], mode='bilinear', padding_mode='border', align_corners=True).reshape(3,-1).T
             sdf = (sampled_depth-z)
             return sdf, sampled_rgb, mask_proj
 
@@ -362,7 +364,7 @@ class GaussianExtractor(object):
                 sdf_trunc = 5 * voxel_size
 
             tsdfs = torch.ones_like(samples[:,0]) * (-1)
-            rgbs = torch.zeros((samples.shape[0], 3)).cuda()
+            rgbs = torch.zeros((samples.shape[0], 3), device=samples.device)
 
             weights = torch.ones_like(samples[:,0])
             for i, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="TSDF integration progress"):
@@ -380,7 +382,6 @@ class GaussianExtractor(object):
                 wp = w + 1
                 tsdfs[mask_proj] = (tsdfs[mask_proj] * w + sdf) / wp
                 rgbs[mask_proj] = (rgbs[mask_proj] * w[:,None] + rgb[mask_proj]) / wp[:,None]
-                # update weight
                 weights[mask_proj] = wp
             
             if return_rgb:
@@ -412,10 +413,11 @@ class GaussianExtractor(object):
         )
         
         # coloring the mesh
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         mesh = mesh.as_open3d
         print("texturing mesh ... ")
-        _, rgbs = compute_unbounded_tsdf(torch.tensor(np.asarray(mesh.vertices)).float().cuda(), inv_contraction=None, voxel_size=voxel_size, return_rgb=True)
+        _, rgbs = compute_unbounded_tsdf(torch.tensor(np.asarray(mesh.vertices)).float().to(self.gaussians.device), inv_contraction=None, voxel_size=voxel_size, return_rgb=True)
         mesh.vertex_colors = o3d.utility.Vector3dVector(rgbs.cpu().numpy())
         return mesh
 

@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from scene.cameras import MiniCam
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
+from utils.general_utils import get_device
 
 _Y_UP  = np.array([0, 1, 0], dtype=np.float32)
 _Z_UP  = np.array([0, 0,-1], dtype=np.float32)
@@ -18,7 +19,6 @@ def _face_R(forward_w, world_up):
     down = np.cross(f, right)
     down = down / np.linalg.norm(down)
     return np.column_stack([right, down, f])
-
 
 _FACE_CONFIGS = [
     ([ 1,  0,  0],  _Y_UP,  '+X'),
@@ -69,21 +69,22 @@ class EnvironmentProbe:
         """Build a MiniCam looking in face direction `face_idx`."""
         fwd, up, _ = _FACE_CONFIGS[face_idx]
         R = _face_R(fwd, up)
-        T = np.zeros(3, dtype=np.float32)  # camera at world origin
+        T = np.zeros(3, dtype=np.float32)
 
+        device = get_device()
         W2C = getWorld2View2(R, T)
-        W2C_t = torch.tensor(W2C, dtype=torch.float32).T.cuda()  # transposed as expected
+        W2C_t = torch.tensor(W2C, dtype=torch.float32).T.to(device)
 
         fov = math.pi / 2.0
         proj = getProjectionMatrix(
             znear=0.01, zfar=100.0, fovX=fov, fovY=fov
-        ).transpose(0, 1).cuda()
+        ).transpose(0, 1).to(device)
         full_proj = W2C_t.unsqueeze(0).bmm(proj.unsqueeze(0)).squeeze(0)
 
         return MiniCam(
-            self.resolution, self.resolution,
-            fov, fov, 0.01, 100.0,
-            W2C_t, full_proj,
+            width=self.resolution, height=self.resolution,
+            fovy=fov, fovx=fov, znear=0.01, zfar=100.0,
+            world_view_transform=W2C_t, full_proj_transform=full_proj,
         )
 
     def should_update(self, iteration: int) -> bool:
@@ -101,12 +102,11 @@ class EnvironmentProbe:
 
         self.faces = torch.stack(faces, dim=0)
 
-        # Build roughness mip levels: repeated Gaussian-like blur
         blurred = [self.faces.clone()]
         for _ in range(self.n_blur_levels - 1):
             prev = blurred[-1]
             B, C, H, W = prev.shape
-            # Average-pool blur (fast approximation of Gaussian)
+            # average pool blur
             nxt = F.avg_pool2d(
                 prev.reshape(B * C, 1, H, W),
                 kernel_size=5, stride=1, padding=2,

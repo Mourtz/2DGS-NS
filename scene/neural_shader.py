@@ -178,12 +178,11 @@ class SIRENPosShader(nn.Module):
         n_dir = 2 if use_reflection else 1
         self.in_dim = pos_enc_dim + dir_enc_dim * n_dir
 
-        # Build layers manually (SIREN needs non-standard init per layer)
+        # Build layers manually to allow SIREN-style initialization and skip connection
         self.layers = nn.ModuleList()
         prev = self.in_dim
         for i in range(n_layers - 1):
             lin = nn.Linear(prev, hidden_dim)
-            # SIREN init
             if i == 0:
                 bound = 1.0 / prev
             else:
@@ -191,12 +190,11 @@ class SIRENPosShader(nn.Module):
             nn.init.uniform_(lin.weight, -bound, bound)
             nn.init.zeros_(lin.bias)
             self.layers.append(lin)
-            # skip connection: after layer 1, concatenate original input
             if skip_connection and i == 1:
                 prev = hidden_dim + self.in_dim
             else:
                 prev = hidden_dim
-        # Output layer (linear, zero-init)
+        
         self.out_layer = nn.Linear(prev, 3)
         nn.init.zeros_(self.out_layer.weight)
         nn.init.zeros_(self.out_layer.bias)
@@ -307,7 +305,6 @@ class ClusteredBRDFShader(nn.Module):
             # Assign each point to nearest centre
             dists = torch.cdist(albedo, centres)
             ids = dists.argmin(dim=1)
-            # Recompute centres
             for k in range(K):
                 mask = ids == k
                 if mask.any():
